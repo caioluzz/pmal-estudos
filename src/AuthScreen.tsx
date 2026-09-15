@@ -87,7 +87,7 @@ export function AuthScreen() {
       <form className="auth-card" onSubmit={submit}>
         <span className="eyebrow">{mode === 'login' ? 'BEM-VINDO DE VOLTA' : 'CRIE SEU ACESSO'}</span>
         <h2>{mode === 'login' ? 'Entrar no PMAL Estudos' : 'Começar minha preparação'}</h2>
-        <p>{mode === 'login' ? 'Seus dados serão carregados do Supabase.' : 'Sua conta mantém cada registro separado e protegido.'}</p>
+        <p>{mode === 'login' ? 'Entre para continuar seu planejamento de estudos.' : 'Sua conta mantém cada registro separado e protegido.'}</p>
 
         <button className="google-auth-button" type="button" onClick={signInWithGoogle} disabled={googleLoading || loading}>
           {googleLoading ? <LoaderCircle className="spin" size={18} /> : <GoogleIcon />}

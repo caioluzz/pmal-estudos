@@ -122,41 +122,14 @@ export const editalSoldado: EdictSection[] = [
   },
 ]
 
-export const initialBatches: QuestionBatch[] = [
-  { id: 'q1', disciplineId: 'portugues', subject: 'Interpretação de textos', total: 30, correct: 24, date: '2026-09-08' },
-  { id: 'q2', disciplineId: 'matematica', subject: 'Porcentagem', total: 25, correct: 14, date: '2026-09-09' },
-  { id: 'q3', disciplineId: 'legislacao', subject: 'Estatuto da PMAL', total: 40, correct: 29, date: '2026-09-10' },
-  { id: 'q4', disciplineId: 'constitucional', subject: 'Direitos fundamentais', total: 30, correct: 23, date: '2026-09-11' },
-  { id: 'q5', disciplineId: 'informatica', subject: 'Segurança da informação', total: 20, correct: 17, date: '2026-09-12' },
-  { id: 'q6', disciplineId: 'penal-militar', subject: 'Aplicação da lei penal militar', total: 25, correct: 15, date: '2026-09-13' },
-]
+// A estrutura começa vazia para que cada usuário registre apenas o próprio
+// histórico de questões resolvidas no QConcursos.
+export const initialBatches: QuestionBatch[] = []
 
-export const initialAvailability: Availability[] = [
-  { day: 0, minutes: 120 }, { day: 1, minutes: 180 }, { day: 2, minutes: 180 }, { day: 3, minutes: 180 }, { day: 4, minutes: 180 }, { day: 5, minutes: 120 }, { day: 6, minutes: 240 },
-]
+export const initialAvailability: Availability[] = Array.from({ length: 7 }, (_, day) => ({ day, minutes: 0 }))
 
-export const initialMissions: Mission[] = [
-  { id: 'm1', disciplineId: 'legislacao', title: 'Lei nº 5.346/1992 · revisão', plannedMinutes: 50, completed: false, notes: '', date: '2026-09-14' },
-  { id: 'm2', disciplineId: 'matematica', title: 'Porcentagem · teoria + questões', plannedMinutes: 50, completed: false, notes: '', date: '2026-09-14' },
-  { id: 'm3', disciplineId: 'portugues', title: 'Interpretação de texto · 20 questões', plannedMinutes: 40, completed: true, notes: 'Revisar inferência e pressupostos.', date: '2026-09-14' },
-]
+export const initialMissions: Mission[] = []
 
-export const initialSessions: StudySession[] = [
-  { id: 's1', disciplineId: 'portugues', missionId: 'm3', seconds: 43 * 60, notes: '', date: '2026-09-14' },
-  { id: 's2', disciplineId: 'legislacao', seconds: 75 * 60, notes: '', date: '2026-09-13' },
-  { id: 's3', disciplineId: 'informatica', seconds: 55 * 60, notes: '', date: '2026-09-12' },
-  { id: 's4', disciplineId: 'constitucional', seconds: 70 * 60, notes: '', date: '2026-09-11' },
-]
+export const initialSessions: StudySession[] = []
 
-export const initialWeeklyPlan: WeeklyPlanItem[] = [
-  { id: 'wp1', day: 1, disciplineId: 'portugues' },
-  { id: 'wp2', day: 1, disciplineId: 'legislacao' },
-  { id: 'wp3', day: 2, disciplineId: 'matematica' },
-  { id: 'wp4', day: 2, disciplineId: 'informatica' },
-  { id: 'wp5', day: 3, disciplineId: 'constitucional' },
-  { id: 'wp6', day: 3, disciplineId: 'penal-militar' },
-  { id: 'wp7', day: 4, disciplineId: 'processo-penal-militar' },
-  { id: 'wp8', day: 4, disciplineId: 'direitos-humanos' },
-  { id: 'wp9', day: 5, disciplineId: 'administrativo' },
-  { id: 'wp10', day: 6, disciplineId: 'alagoas' },
-]
+export const initialWeeklyPlan: WeeklyPlanItem[] = []
