@@ -232,6 +232,19 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
   const profileName = cloudUser?.user_metadata?.name?.trim() || cloudUser?.email?.split('@')[0] || 'Caio Luz'
   const initials = profileName.split(/\s+/).slice(0, 2).map((part: string) => part[0]).join('').toUpperCase()
   const cloudLabel = cloudStatus === 'loading' ? 'Carregando dados' : cloudStatus === 'saving' ? 'Salvando...' : cloudStatus === 'synced' ? 'Sincronizado' : cloudStatus === 'error' ? 'Erro de sincronização' : 'Modo local'
+  const weekStart = new Date()
+  weekStart.setHours(12, 0, 0, 0)
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay())
+  const weekStartValue = weekStart.toISOString().slice(0, 10)
+  const weekEndValue = addDays(weekStartValue, 7)
+  const weeklyGoalMinutes = availability.reduce((sum, item) => sum + item.minutes, 0)
+  const weeklyStudyMinutes = sessions
+    .filter((session) => session.date >= weekStartValue && session.date < weekEndValue)
+    .reduce((sum, session) => sum + session.seconds / 60, 0)
+  const weeklyProgress = Math.min(100, percentage(weeklyStudyMinutes, weeklyGoalMinutes))
+  const weeklyTargetDetail = weeklyGoalMinutes
+    ? `${formatMinutes(Math.round(weeklyStudyMinutes))} de ${formatMinutes(weeklyGoalMinutes)} planejadas`
+    : 'Defina sua disponibilidade no ciclo'
 
   return (
     <div className="app-shell">
@@ -243,7 +256,7 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
           {nav.map((item) => <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => { setPage(item.id); setMenuOpen(false) }}><item.icon size={18} />{item.label}{item.id === 'cycle' && pendingReviewCount > 0 && <span className="nav-badge">{pendingReviewCount}</span>}</button>)}
         </nav>
         <div className="sidebar-bottom">
-          <div className="target-card"><div className="target-head"><Target size={16} /><span>META DA SEMANA</span><b>62%</b></div><div className="progress"><span style={{ width: '62%' }} /></div><small>7h 28min de 12h planejadas</small></div>
+          <div className="target-card"><div className="target-head"><Target size={16} /><span>META DA SEMANA</span><b>{weeklyProgress}%</b></div><div className="progress"><span style={{ width: `${weeklyProgress}%` }} /></div><small>{weeklyTargetDetail}</small></div>
           <div className="profile"><div className="avatar">{initials}</div><div><strong>{profileName}</strong><small className={`cloud-${cloudStatus}`}>{cloudStatus === 'local' ? <CloudOff size={11} /> : <Cloud size={11} />}{cloudLabel}</small></div>{cloudUser ? <button className="signout-button" onClick={() => supabase?.auth.signOut()} title="Sair"><LogOut size={17} /></button> : <MoreHorizontal size={18} />}</div>
         </div>
       </aside>
