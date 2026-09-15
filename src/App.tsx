@@ -58,6 +58,13 @@ function localDate(value: string) {
   return new Date(`${value}T12:00:00`)
 }
 
+function isoDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function addDays(value: string, days: number) {
   const date = localDate(value)
   date.setDate(date.getDate() + days)
@@ -235,11 +242,16 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
   const weekStart = new Date()
   weekStart.setHours(12, 0, 0, 0)
   weekStart.setDate(weekStart.getDate() - weekStart.getDay())
-  const weekStartValue = weekStart.toISOString().slice(0, 10)
+  const weekStartValue = isoDate(weekStart)
   const weekEndValue = addDays(weekStartValue, 7)
-  const weeklyGoalMinutes = availability.reduce((sum, item) => sum + item.minutes, 0)
+  const accountStartValue = cloudUser?.created_at ? isoDate(new Date(cloudUser.created_at)) : weekStartValue
+  const effectiveWeekStartValue = accountStartValue > weekStartValue ? accountStartValue : weekStartValue
+  const weeklyGoalMinutes = availability.reduce((sum, item) => {
+    const itemDate = addDays(weekStartValue, item.day)
+    return itemDate >= effectiveWeekStartValue && itemDate < weekEndValue ? sum + item.minutes : sum
+  }, 0)
   const weeklyStudyMinutes = sessions
-    .filter((session) => session.date >= weekStartValue && session.date < weekEndValue)
+    .filter((session) => session.date >= effectiveWeekStartValue && session.date < weekEndValue)
     .reduce((sum, session) => sum + session.seconds / 60, 0)
   const weeklyProgress = Math.min(100, percentage(weeklyStudyMinutes, weeklyGoalMinutes))
   const weeklyTargetDetail = weeklyGoalMinutes
@@ -293,7 +305,17 @@ function Dashboard({ batches, disciplines, sessions, missions, onPage }: { batch
     return { ...d, total, correct, rate: percentage(correct, total) }
   }).filter((d) => d.total).sort((a, b) => b.rate - a.rate)
   const weakest = [...byDiscipline].sort((a, b) => a.rate - b.rate)[0]
-  const daily = ['08', '09', '10', '11', '12', '13', '14'].map((day) => ({ day, value: sessions.filter((s) => s.date.endsWith(`-${day}`)).reduce((a, s) => a + s.seconds / 60, 0) }))
+  const daily = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date()
+    date.setHours(12, 0, 0, 0)
+    date.setDate(date.getDate() - (6 - index))
+    const dateValue = isoDate(date)
+    return {
+      day: dateValue.slice(8, 10),
+      month: dateValue.slice(5, 7),
+      value: sessions.filter((session) => session.date === dateValue).reduce((a, s) => a + s.seconds / 60, 0),
+    }
+  })
   const maxDaily = Math.max(...daily.map((d) => d.value), 90)
 
   return <div className="page-content dashboard-grid">
@@ -307,7 +329,7 @@ function Dashboard({ batches, disciplines, sessions, missions, onPage }: { batch
     <section className="card performance-card">
       <CardTitle title="Ritmo de estudo" subtitle="Minutos líquidos nos últimos 7 dias" action="Ver ciclo" onAction={() => onPage('cycle')} />
       <div className="bar-chart">
-        {daily.map((item, i) => <div className="bar-column" key={item.day}><div className="bar-value">{item.value ? Math.round(item.value) : ''}</div><div className={`bar ${i === daily.length - 1 ? 'current' : ''}`} style={{ height: `${Math.max(5, (item.value / maxDaily) * 100)}%` }} /><span>{item.day}/09</span></div>)}
+        {daily.map((item, i) => <div className="bar-column" key={`${item.month}-${item.day}`}><div className="bar-value">{item.value ? Math.round(item.value) : ''}</div><div className={`bar ${i === daily.length - 1 ? 'current' : ''}`} style={{ height: `${Math.max(5, (item.value / maxDaily) * 100)}%` }} /><span>{item.day}/{item.month}</span></div>)}
       </div>
     </section>
 
