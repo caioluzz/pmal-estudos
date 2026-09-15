@@ -3,3 +3,9 @@ project_id = "pmal-estudos"
 [auth]
 site_url = "https://pmal-estudos.vercel.app"
 additional_redirect_urls = ["https://pmal-estudos.vercel.app/**", "http://127.0.0.1:4173/**", "http://localhost:4173/**"]
+
+[auth.external.google]
+enabled = true
+client_id = "777826408919-vaqv1f5avouga6p8bfc7bvtl718jp8en.apps.googleusercontent.com"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET)"
+skip_nonce_check = false
