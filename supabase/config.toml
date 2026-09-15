@@ -1,0 +1,5 @@
+project_id = "pmal-estudos"
+
+[auth]
+site_url = "https://pmal-estudos.vercel.app"
+additional_redirect_urls = ["https://pmal-estudos.vercel.app/**", "http://127.0.0.1:4173/**", "http://localhost:4173/**"]
