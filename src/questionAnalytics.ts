@@ -50,7 +50,7 @@ export function filterEvolutionBatches(
     : subtractDays(referenceDate, periodDays[filters.period] - 1)
 
   return batches.filter((batch) => (
-    batch.disciplineId === filters.disciplineId
+    (filters.disciplineId === 'all' || batch.disciplineId === filters.disciplineId)
     && (filters.subject === 'all' || batch.subject === filters.subject)
     && (filters.subtopic === 'all' || (batch.subtopic ?? '') === filters.subtopic)
     && (!cutoff || batch.date >= cutoff)

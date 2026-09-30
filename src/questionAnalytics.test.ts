@@ -30,6 +30,18 @@ describe('evolução de questões', () => {
     expect(filtered.map((batch) => batch.id)).toEqual(['2'])
   })
 
+  it('consolida todas as disciplinas quando o filtro de matéria está aberto', () => {
+    const filtered = filterEvolutionBatches(batches, {
+      disciplineId: 'all',
+      subject: 'all',
+      subtopic: 'all',
+      period: 'all',
+    }, '2026-09-30')
+
+    expect(filtered).toHaveLength(5)
+    expect(new Set(filtered.map((batch) => batch.disciplineId))).toEqual(new Set(['matematica', 'portugues']))
+  })
+
   it('resume volume, aproveitamento, melhor data e variação entre extremos', () => {
     const summary = summarizeEvolution(buildEvolutionSeries([
       { ...batches[0], date: '2026-09-01' },

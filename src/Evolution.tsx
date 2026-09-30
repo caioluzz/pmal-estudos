@@ -110,14 +110,13 @@ function EvolutionChart({ points, compareQuestions }: { points: ReturnType<typeo
 }
 
 export function Evolution({ batches, disciplines }: EvolutionProps) {
-  const disciplinesWithData = disciplines.filter((discipline) => batches.some((batch) => batch.disciplineId === discipline.id))
-  const [disciplineId, setDisciplineId] = useState(() => disciplinesWithData[0]?.id ?? disciplines[0]?.id ?? '')
+  const [disciplineId, setDisciplineId] = useState('all')
   const [subject, setSubject] = useState('all')
   const [subtopic, setSubtopic] = useState('all')
   const [period, setPeriod] = useState<EvolutionPeriod>('all')
   const [compareQuestions, setCompareQuestions] = useState(false)
 
-  const disciplineBatches = batches.filter((batch) => batch.disciplineId === disciplineId)
+  const disciplineBatches = batches.filter((batch) => disciplineId === 'all' || batch.disciplineId === disciplineId)
   const subjects = unique(disciplineBatches.map((batch) => batch.subject))
   const subtopics = unique(disciplineBatches
     .filter((batch) => subject === 'all' || batch.subject === subject)
@@ -130,7 +129,7 @@ export function Evolution({ batches, disciplines }: EvolutionProps) {
     period,
   }, today())), [batches, disciplineId, subject, subtopic, period])
   const summary = summarizeEvolution(points)
-  const filterDescription = [selectedDiscipline?.name, subject !== 'all' ? subject : null, subtopic !== 'all' ? subtopic : null]
+  const filterDescription = [disciplineId === 'all' ? 'Todas as disciplinas' : selectedDiscipline?.name, subject !== 'all' ? subject : null, subtopic !== 'all' ? subtopic : null]
     .filter(Boolean)
     .join(' · ')
 
@@ -141,7 +140,7 @@ export function Evolution({ batches, disciplines }: EvolutionProps) {
         <div><strong>Monte seu recorte</strong><p>A taxa é calculada com todas as baterias de cada data.</p></div>
       </div>
       <div className="evolution-filters">
-        <label><span>Disciplina</span><select value={disciplineId} onChange={(event) => { setDisciplineId(event.target.value); setSubject('all'); setSubtopic('all') }}>{disciplines.map((discipline) => <option key={discipline.id} value={discipline.id}>{discipline.name}</option>)}</select></label>
+        <label><span>Disciplina</span><select value={disciplineId} onChange={(event) => { setDisciplineId(event.target.value); setSubject('all'); setSubtopic('all') }}><option value="all">Todas as disciplinas</option>{disciplines.map((discipline) => <option key={discipline.id} value={discipline.id}>{discipline.name}</option>)}</select></label>
         <label><span>Assunto</span><select value={subject} onChange={(event) => { setSubject(event.target.value); setSubtopic('all') }}><option value="all">Todos os assuntos</option>{subjects.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label><span>Subassunto</span><select value={subtopic} onChange={(event) => setSubtopic(event.target.value)} disabled={!subtopics.length}><option value="all">Todos os subassuntos</option>{subtopics.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label><span>Período</span><select value={period} onChange={(event) => setPeriod(event.target.value as EvolutionPeriod)}><option value="30d">Últimos 30 dias</option><option value="90d">Últimos 90 dias</option><option value="all">Todo o histórico</option></select></label>
