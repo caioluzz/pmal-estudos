@@ -13,9 +13,19 @@ export interface QuestionBatch {
   disciplineId: string
   subject: string
   subtopic?: string
+  origin?: 'study' | 'review'
   total: number
   correct: number
   date: string
+}
+
+export interface QuestionBatchDraft {
+  id: string
+  origin: NonNullable<QuestionBatch['origin']>
+  subject: string
+  subtopic: string
+  total: number
+  correct: number
 }
 
 export interface EdictTopic {

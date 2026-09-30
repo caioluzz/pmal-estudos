@@ -8,6 +8,7 @@ export const disciplines: Discipline[] = [
   { id: 'legislacao', name: 'Legislação PMAL', color: '#f472b6', difficulty: 'Difícil' },
   { id: 'administrativo', name: 'Direito Administrativo', color: '#2dd4bf', difficulty: 'Médio' },
   { id: 'constitucional', name: 'Direito Constitucional', color: '#fbbf24', difficulty: 'Médio' },
+  { id: 'penal', name: 'Direito Penal', color: '#fb7185', difficulty: 'Difícil' },
   { id: 'processo-penal', name: 'Processo Penal', color: '#60a5fa', difficulty: 'Médio' },
   { id: 'penal-militar', name: 'Direito Penal Militar', color: '#f87171', difficulty: 'Difícil' },
   { id: 'processo-penal-militar', name: 'Processo Penal Militar', color: '#c084fc', difficulty: 'Difícil' },
@@ -72,7 +73,6 @@ export const editalSoldado: EdictSection[] = [
     id: 'legislacao', title: 'Legislação Pertinente ao Policial Militar de Alagoas', topics: [
       t('leg-1', 'Lei Estadual nº 5.346/1992 — Estatuto dos Policiais Militares de Alagoas'),
       t('leg-2', 'Decreto Estadual nº 37.042/1996 — Regulamento Disciplinar da PMAL'),
-      t('leg-3', 'Código Penal — Parte Geral, Títulos I a III'),
       t('leg-4', 'Lei nº 7.716/1989 — crimes de preconceito de raça ou cor'),
       t('leg-5', 'Leis nº 8.072/1990 e nº 8.930/1994 — crimes hediondos'),
       t('leg-6', 'Lei nº 12.850/2013 — organizações criminosas'),
@@ -101,6 +101,11 @@ export const editalSoldado: EdictSection[] = [
     ],
   },
   {
+    id: 'penal', title: 'Noções de Direito Penal', topics: [
+      t('dp-1', 'Código Penal — Parte Geral, Títulos I a III'),
+    ],
+  },
+  {
     id: 'processo-penal', title: 'Noções de Direito Processual Penal', topics: [
       t('pp-1', 'Inquérito policial'), t('pp-2', 'Ação penal'),
     ],
@@ -121,6 +126,49 @@ export const editalSoldado: EdictSection[] = [
     ],
   },
 ]
+
+const direitoPenal: Discipline = disciplines.find((discipline) => discipline.id === 'penal')!
+const topicoDireitoPenal = editalSoldado.find((section) => section.id === 'penal')!.topics[0]
+
+/** Inclui Direito Penal em dados persistidos por versões anteriores. */
+export function migrateDisciplines(current: Discipline[]): Discipline[] {
+  if (current.some((discipline) => discipline.id === direitoPenal.id)) return current
+
+  const insertionIndex = current.findIndex((discipline) => discipline.id === 'processo-penal')
+  const next = [...current]
+  next.splice(insertionIndex < 0 ? next.length : insertionIndex, 0, direitoPenal)
+  return next
+}
+
+/** Move o tópico de Código Penal para uma matéria própria sem perder seu status. */
+export function migrateEdictSections(current: EdictSection[]): EdictSection[] {
+  const legislation = current.find((section) => section.id === 'legislacao')
+  const oldTopic = legislation?.topics.find((topic) => topic.id === 'leg-3')
+  const penalSection = current.find((section) => section.id === 'penal')
+  const hasPenalTopic = penalSection?.topics.some((topic) => topic.id === 'dp-1')
+
+  if (penalSection && !oldTopic && hasPenalTopic) return current
+
+  const migratedTopic = oldTopic ? { ...oldTopic, id: 'dp-1' } : topicoDireitoPenal
+  let next = current.map((section) => {
+    if (section.id === 'legislacao' && oldTopic) {
+      return { ...section, topics: section.topics.filter((topic) => topic.id !== oldTopic.id) }
+    }
+    if (section.id === 'penal' && !hasPenalTopic) {
+      return { ...section, topics: [migratedTopic, ...section.topics] }
+    }
+    return section
+  })
+
+  if (!penalSection) {
+    const insertionIndex = next.findIndex((section) => section.id === 'processo-penal')
+    const section = { id: 'penal', title: 'Noções de Direito Penal', topics: [migratedTopic] }
+    next = [...next]
+    next.splice(insertionIndex < 0 ? next.length : insertionIndex, 0, section)
+  }
+
+  return next
+}
 
 // A estrutura começa vazia para que cada usuário registre apenas o próprio
 // histórico de questões resolvidas no QConcursos.

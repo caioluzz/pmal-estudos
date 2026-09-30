@@ -2,30 +2,36 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import {
   BookOpenCheck, CalendarDays, Check, CheckCircle2, ChevronDown,
   ChevronRight, ClipboardCheck, Clock3, Cloud, CloudOff, FileText, LoaderCircle, LogOut,
-  BellRing, Gauge, LayoutDashboard, ListChecks, Menu, MoreHorizontal, Pause, Play,
+  BellRing, ChartNoAxesCombined, Gauge, LayoutDashboard, ListChecks, Menu, MoreHorizontal, Pause, Play,
   Plus, RotateCcw, Search, Sparkles, Target, TimerReset, Trash2, X,
 } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
-import { disciplines as seedDisciplines, editalSoldado, initialAvailability, initialBatches, initialMissions, initialSessions, initialWeeklyPlan } from './data'
+import { disciplines as seedDisciplines, editalSoldado, initialAvailability, initialBatches, initialMissions, initialSessions, initialWeeklyPlan, migrateDisciplines, migrateEdictSections } from './data'
 import { AuthScreen } from './AuthScreen'
+import { Evolution } from './Evolution'
 import { useLocalStorage } from './hooks'
-import { dateLabel, dayNames, formatClock, formatMinutes, percentage, today, uid } from './lib'
+import { dateLabel, dayNames, distributeMinutesByWeight, formatClock, formatHours, formatMinutes, formatStudySeconds, greetingForHour, percentage, runningTimerSeconds, studySecondsForMission, studySecondsOnDate, today, uid } from './lib'
+import { reviewAlerts } from './reviews'
+import { createQuestionBatchDraft, invalidQuestionBatchIndex, questionBatchesFromDrafts } from './sessionQuestions'
 import { isCloudConfigured, supabase } from './supabase'
-import type { Availability, Discipline, EdictSection, EdictTopic, Mission, QuestionBatch, StudySession, TopicStatus, WeeklyPlanItem } from './types'
+import type { Availability, Discipline, EdictSection, EdictTopic, Mission, QuestionBatch, QuestionBatchDraft, StudySession, TopicStatus, WeeklyPlanItem } from './types'
 
-type Page = 'dashboard' | 'questions' | 'edital' | 'cycle' | 'focus'
+type Page = 'dashboard' | 'questions' | 'evolution' | 'edital' | 'cycle' | 'focus'
+type SubjectMapSort = 'lowest' | 'highest' | 'questions' | 'alphabetical'
 
 const nav: { id: Page; label: string; icon: typeof Gauge }[] = [
   { id: 'dashboard', label: 'Visão geral', icon: LayoutDashboard },
   { id: 'questions', label: 'Caderno de questões', icon: ClipboardCheck },
+  { id: 'evolution', label: 'Evolução', icon: ChartNoAxesCombined },
   { id: 'edital', label: 'Edital verticalizado', icon: BookOpenCheck },
   { id: 'cycle', label: 'Ciclo de estudos', icon: CalendarDays },
   { id: 'focus', label: 'Sala de foco', icon: TimerReset },
 ]
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; description: string }> = {
-  dashboard: { eyebrow: '', title: 'Boa noite, Caio.', description: 'Um panorama honesto do seu preparo para Soldado da PMAL.' },
+  dashboard: { eyebrow: '', title: '', description: 'Um panorama honesto do seu preparo para Soldado da PMAL.' },
   questions: { eyebrow: 'DESEMPENHO', title: 'Caderno de questões', description: 'Registre suas baterias do QConcursos e descubra onde ajustar a rota.' },
+  evolution: { eyebrow: 'ANÁLISE', title: 'Evolução', description: 'Acompanhe sua taxa de acerto e o volume de questões ao longo do tempo.' },
   edital: { eyebrow: 'EDITAL Nº 1 · PMAL 2026', title: 'Edital verticalizado', description: 'Cargo 2 — Soldado do Quadro de Praças.' },
   cycle: { eyebrow: 'PLANEJAMENTO', title: 'Ciclo de estudos', description: 'Seu tempo disponível convertido em missões claras e executáveis.' },
   focus: { eyebrow: 'EXECUÇÃO', title: 'Sala de foco', description: 'Cronômetro líquido, Pomodoro e notas no mesmo lugar.' },
@@ -43,15 +49,10 @@ type CloudStudyState = {
   weeklyPlan: WeeklyPlanItem[]
 }
 
-type ReviewAlert = {
-  id: string
-  disciplineId: string
-  subject: string
-  subtopic?: string
-  interval: '24h' | '7 dias' | '30 dias'
-  dueDate: string
-  sourceDate: string
-  daysLate: number
+type LiquidTimerState = {
+  elapsed: number
+  running: boolean
+  startedAt: number | null
 }
 
 function localDate(value: string) {
@@ -72,36 +73,6 @@ function addDays(value: string, days: number) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-function reviewAlerts(batches: QuestionBatch[], missions: Mission[] = []): ReviewAlert[] {
-  const latest = new Map<string, QuestionBatch>()
-  batches.forEach((batch) => {
-    const key = `${batch.disciplineId}|${batch.subject.toLowerCase()}|${batch.subtopic?.toLowerCase() ?? ''}`
-    const current = latest.get(key)
-    if (!current || batch.date > current.date) latest.set(key, batch)
-  })
-  const current = localDate(today()).getTime()
-  return [...latest.values()].flatMap((batch) => ([
-    { label: '24h' as const, days: 1 },
-    { label: '7 dias' as const, days: 7 },
-    { label: '30 dias' as const, days: 30 },
-  ].map(({ label, days }) => {
-    const dueDate = addDays(batch.date, days)
-    return {
-      id: `${batch.id}-${days}`,
-      disciplineId: batch.disciplineId,
-      subject: batch.subject,
-      subtopic: batch.subtopic,
-      interval: label,
-      dueDate,
-      sourceDate: batch.date,
-      daysLate: Math.floor((current - localDate(dueDate).getTime()) / 86400000),
-    }
-  }))).filter((review) => {
-    const title = `Revisão ${review.interval} · ${review.subject}${review.subtopic ? ` · ${review.subtopic}` : ''}`
-    return !missions.some((mission) => mission.completed && mission.title === title && mission.date >= review.dueDate)
-  }).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
 }
 
 export default function App() {
@@ -138,6 +109,7 @@ export default function App() {
 
 function StudyApp({ cloudUser }: { cloudUser: User | null }) {
   const [page, setPage] = useState<Page>('dashboard')
+  const [currentTime, setCurrentTime] = useState(() => new Date())
   const [menuOpen, setMenuOpen] = useState(false)
   const [questionModal, setQuestionModal] = useState(false)
   const [toast, setToast] = useState('')
@@ -148,12 +120,25 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
   const [missions, setMissions] = useLocalStorage<Mission[]>('farol-missions', initialMissions)
   const [sessions, setSessions] = useLocalStorage<StudySession[]>('farol-sessions', initialSessions)
   const [weeklyPlan, setWeeklyPlan] = useLocalStorage<WeeklyPlanItem[]>('pmal-weekly-plan', initialWeeklyPlan)
+  const [liquidTimer, setLiquidTimer] = useLocalStorage<LiquidTimerState>('pmal-liquid-timer', { elapsed: 0, running: false, startedAt: null })
   const [cloudHydrated, setCloudHydrated] = useState(!cloudUser)
   const [cloudStatus, setCloudStatus] = useState<'local' | 'loading' | 'saving' | 'synced' | 'error'>(cloudUser ? 'loading' : 'local')
   const lastSyncedRef = useRef('')
 
+  useEffect(() => {
+    const interval = window.setInterval(() => setCurrentTime(new Date()), 60_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
   const cloudState: CloudStudyState = { disciplines, batches, edict, availability, missions, sessions, weeklyPlan }
   const cloudStateJson = JSON.stringify(cloudState)
+
+  useEffect(() => {
+    const migratedDisciplines = migrateDisciplines(disciplines)
+    const migratedEdict = migrateEdictSections(edict)
+    if (migratedDisciplines !== disciplines) setDisciplines(migratedDisciplines)
+    if (migratedEdict !== edict) setEdict(migratedEdict)
+  }, [disciplines, edict, setDisciplines, setEdict])
 
   useEffect(() => {
     if (!cloudUser || !supabase) return
@@ -233,13 +218,15 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
   const meta = pageMeta[page]
   const pendingReviewCount = reviewAlerts(batches, missions).filter((review) => review.daysLate >= 0).length
   const dateEyebrow = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })
-    .format(new Date())
+    .format(currentTime)
     .replace('-feira', '')
     .toUpperCase()
   const profileName = cloudUser?.user_metadata?.name?.trim() || cloudUser?.email?.split('@')[0] || 'Caio Luz'
+  const firstName = profileName.split(/\s+/)[0] || 'Caio'
+  const dashboardTitle = `${greetingForHour(currentTime.getHours())}, ${firstName}.`
   const initials = profileName.split(/\s+/).slice(0, 2).map((part: string) => part[0]).join('').toUpperCase()
   const cloudLabel = cloudStatus === 'loading' ? 'Carregando dados' : cloudStatus === 'saving' ? 'Salvando...' : cloudStatus === 'synced' ? 'Sincronizado' : cloudStatus === 'error' ? 'Erro de sincronização' : 'Modo local'
-  const weekStart = new Date()
+  const weekStart = new Date(currentTime)
   weekStart.setHours(12, 0, 0, 0)
   weekStart.setDate(weekStart.getDate() - weekStart.getDay())
   const weekStartValue = isoDate(weekStart)
@@ -276,15 +263,16 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
       <main className="main">
         <header className="topbar">
           <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Abrir menu"><Menu /></button>
-          <div><span className="eyebrow">{page === 'dashboard' ? dateEyebrow : meta.eyebrow}</span><h1>{meta.title}</h1><p>{meta.description}</p></div>
+          <div><span className="eyebrow">{page === 'dashboard' ? dateEyebrow : meta.eyebrow}</span><h1>{page === 'dashboard' ? dashboardTitle : meta.title}</h1><p>{meta.description}</p></div>
           <div className="top-actions"><button className="icon-button" aria-label="Pesquisar"><Search size={19} /></button><button className="primary-button" onClick={() => setQuestionModal(true)}><Plus size={18} /> Registrar questões</button></div>
         </header>
 
-        {page === 'dashboard' && <Dashboard batches={batches} disciplines={disciplines} sessions={sessions} missions={missions} onPage={setPage} />}
+        {page === 'dashboard' && <Dashboard batches={batches} disciplines={disciplines} sessions={sessions} missions={missions} setMissions={setMissions} onPage={setPage} notify={notify} />}
         {page === 'questions' && <Questions batches={batches} disciplines={disciplines} onAdd={() => setQuestionModal(true)} onDelete={(id) => { setBatches(batches.filter((b) => b.id !== id)); notify('Registro removido.') }} />}
+        {page === 'evolution' && <Evolution batches={batches} disciplines={disciplines} />}
         {page === 'edital' && <Edict sections={edict} setSections={setEdict} notify={notify} />}
-        {page === 'cycle' && <Cycle disciplines={disciplines} setDisciplines={setDisciplines} availability={availability} setAvailability={setAvailability} missions={missions} setMissions={setMissions} batches={batches} weeklyPlan={weeklyPlan} setWeeklyPlan={setWeeklyPlan} notify={notify} />}
-        {page === 'focus' && <Focus disciplines={disciplines} missions={missions} setMissions={setMissions} sessions={sessions} setSessions={setSessions} notify={notify} />}
+        {page === 'cycle' && <Cycle disciplines={disciplines} setDisciplines={setDisciplines} availability={availability} setAvailability={setAvailability} missions={missions} setMissions={setMissions} sessions={sessions} batches={batches} weeklyPlan={weeklyPlan} setWeeklyPlan={setWeeklyPlan} notify={notify} />}
+        {page === 'focus' && <Focus disciplines={disciplines} missions={missions} setMissions={setMissions} sessions={sessions} setSessions={setSessions} batches={batches} setBatches={setBatches} liquidTimer={liquidTimer} setLiquidTimer={setLiquidTimer} notify={notify} />}
       </main>
 
       {questionModal && <QuestionModal disciplines={disciplines} onClose={() => setQuestionModal(false)} onSave={(batch) => { setBatches([batch, ...batches]); setQuestionModal(false); notify('Bateria registrada. Seu desempenho foi recalculado.') }} />}
@@ -294,7 +282,7 @@ function StudyApp({ cloudUser }: { cloudUser: User | null }) {
   )
 }
 
-function Dashboard({ batches, disciplines, sessions, missions, onPage }: { batches: QuestionBatch[]; disciplines: Discipline[]; sessions: StudySession[]; missions: Mission[]; onPage: (p: Page) => void }) {
+function Dashboard({ batches, disciplines, sessions, missions, setMissions, onPage, notify }: { batches: QuestionBatch[]; disciplines: Discipline[]; sessions: StudySession[]; missions: Mission[]; setMissions: (m: Mission[]) => void; onPage: (p: Page) => void; notify: (s: string) => void }) {
   const totals = batches.reduce((a, b) => ({ total: a.total + b.total, correct: a.correct + b.correct }), { total: 0, correct: 0 })
   const totalMinutes = Math.round(sessions.reduce((a, s) => a + s.seconds, 0) / 60)
   const reviewsDue = reviewAlerts(batches, missions).filter((review) => review.daysLate >= 0)
@@ -305,6 +293,7 @@ function Dashboard({ batches, disciplines, sessions, missions, onPage }: { batch
     return { ...d, total, correct, rate: percentage(correct, total) }
   }).filter((d) => d.total).sort((a, b) => b.rate - a.rate)
   const weakest = [...byDiscipline].sort((a, b) => a.rate - b.rate)[0]
+  const todayMissions = missions.filter((mission) => mission.date === today())
   const daily = Array.from({ length: 7 }, (_, index) => {
     const date = new Date()
     date.setHours(12, 0, 0, 0)
@@ -327,17 +316,21 @@ function Dashboard({ batches, disciplines, sessions, missions, onPage }: { batch
     </section>
 
     <section className="card performance-card">
-      <CardTitle title="Ritmo de estudo" subtitle="Minutos líquidos nos últimos 7 dias" action="Ver ciclo" onAction={() => onPage('cycle')} />
+      <CardTitle title="Ritmo de estudo" subtitle="Horas líquidas nos últimos 7 dias" action="Ver ciclo" onAction={() => onPage('cycle')} />
       <div className="bar-chart">
-        {daily.map((item, i) => <div className="bar-column" key={`${item.month}-${item.day}`}><div className="bar-value">{item.value ? Math.round(item.value) : ''}</div><div className={`bar ${i === daily.length - 1 ? 'current' : ''}`} style={{ height: `${Math.max(5, (item.value / maxDaily) * 100)}%` }} /><span>{item.day}/{item.month}</span></div>)}
+        {daily.map((item, i) => <div className="bar-column" key={`${item.month}-${item.day}`}><div className="bar-value">{item.value ? formatHours(item.value) : ''}</div><div className={`bar ${i === daily.length - 1 ? 'current' : ''}`} style={{ height: `${Math.max(5, (item.value / maxDaily) * 100)}%` }} /><span>{item.day}/{item.month}</span></div>)}
       </div>
     </section>
 
     <section className="card today-card">
-      <CardTitle title="Missões de hoje" subtitle={`${missions.filter((m) => !m.completed).length} itens aguardando`} action="Abrir ciclo" onAction={() => onPage('cycle')} />
-      <div className="mission-list compact">
-        {missions.slice(0, 4).map((m) => { const d = disciplines.find((x) => x.id === m.disciplineId)!; return <div className={`mission-row ${m.completed ? 'done' : ''}`} key={m.id}><span className="status-dot" style={{ borderColor: d.color, background: m.completed ? d.color : 'transparent' }}>{m.completed && <Check size={12} />}</span><div><small style={{ color: d.color }}>{d.name.toUpperCase()}</small><strong>{m.title}</strong></div><span>{formatMinutes(m.plannedMinutes)}</span></div> })}
-      </div>
+      <CardTitle title="Missões de hoje" subtitle="Primeiro entram as revisões pendentes; depois, os assuntos do ciclo semanal" />
+      <MissionList
+        missions={todayMissions.slice(0, 4)}
+        disciplines={disciplines}
+        sessions={sessions}
+        onToggle={(id) => setMissions(missions.map((mission) => mission.id === id ? { ...mission, completed: !mission.completed } : mission))}
+        onDelete={(id) => { setMissions(missions.filter((mission) => mission.id !== id)); notify('Missão removida.') }}
+      />
     </section>
 
     <section className="card discipline-card">
@@ -364,6 +357,9 @@ function CardTitle({ title, subtitle, action, onAction }: { title: string; subti
 function Questions({ batches, disciplines, onAdd, onDelete }: { batches: QuestionBatch[]; disciplines: Discipline[]; onAdd: () => void; onDelete: (id: string) => void }) {
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
+  const [mapDiscipline, setMapDiscipline] = useState('all')
+  const [mapQuery, setMapQuery] = useState('')
+  const [mapSort, setMapSort] = useState<SubjectMapSort>('lowest')
   const [showAllSubjects, setShowAllSubjects] = useState(false)
   const visible = batches.filter((b) => (filter === 'all' || b.disciplineId === filter) && `${b.subject} ${b.subtopic ?? ''}`.toLowerCase().includes(query.toLowerCase()))
   const total = visible.reduce((a, b) => a + b.total, 0)
@@ -377,14 +373,40 @@ function Questions({ batches, disciplines, onAdd, onDelete }: { batches: Questio
       ? { ...current, total: current.total + batch.total, correct: current.correct + batch.correct }
       : { key, disciplineId: d.id, disciplineName: d.name, color: d.color, subject: batch.subject, subtopic: batch.subtopic, total: batch.total, correct: batch.correct })
   })
-  const grouped = [...groupedMap.values()].map((item) => ({ ...item, rate: percentage(item.correct, item.total) })).sort((a, b) => a.rate - b.rate)
-  const subjectCards = showAllSubjects ? grouped : grouped.slice(0, 6)
+  const grouped = [...groupedMap.values()].map((item) => ({ ...item, rate: percentage(item.correct, item.total) }))
+  const normalizedMapQuery = mapQuery.trim().toLocaleLowerCase('pt-BR')
+  const filteredSubjects = grouped
+    .filter((item) => (mapDiscipline === 'all' || item.disciplineId === mapDiscipline)
+      && `${item.subject} ${item.subtopic ?? ''}`.toLocaleLowerCase('pt-BR').includes(normalizedMapQuery))
+    .sort((a, b) => {
+      if (mapSort === 'highest') return b.rate - a.rate || a.subject.localeCompare(b.subject, 'pt-BR')
+      if (mapSort === 'questions') return b.total - a.total || a.subject.localeCompare(b.subject, 'pt-BR')
+      if (mapSort === 'alphabetical') return a.subject.localeCompare(b.subject, 'pt-BR')
+      return a.rate - b.rate || a.subject.localeCompare(b.subject, 'pt-BR')
+    })
+  const subjectCards = showAllSubjects ? filteredSubjects : filteredSubjects.slice(0, 6)
+  const hasMapFilters = mapDiscipline !== 'all' || Boolean(mapQuery.trim()) || mapSort !== 'lowest'
+  const mapSortLabel = mapSort === 'lowest' ? 'menores aproveitamentos primeiro' : mapSort === 'highest' ? 'maiores aproveitamentos primeiro' : mapSort === 'questions' ? 'mais questões primeiro' : 'ordem alfabética'
+
+  const resetSubjectMap = () => {
+    setMapDiscipline('all')
+    setMapQuery('')
+    setMapSort('lowest')
+    setShowAllSubjects(false)
+  }
 
   return <div className="page-content">
     <section className="summary-strip"><div><span>QUESTÕES NO RECORTE</span><strong>{total}</strong></div><div><span>ACERTOS</span><strong>{correct}</strong></div><div><span>APROVEITAMENTO</span><strong>{percentage(correct, total)}%</strong></div><div><span>BATERIAS</span><strong>{visible.length}</strong></div></section>
-    <section className="card subject-overview"><CardTitle title="Mapa por assunto" subtitle={`${grouped.length} assuntos registrados · menores aproveitamentos primeiro`} />
-      <div className="subject-pills">{subjectCards.map((item) => <button key={item.key} onClick={() => { setFilter(item.disciplineId); setQuery(item.subject) }} className={filter === item.disciplineId && query === item.subject ? 'selected' : ''}><span style={{ background: item.color }} /><div><strong>{item.subject}</strong><small>{item.disciplineName}{item.subtopic ? ` · ${item.subtopic}` : ''} · {item.total} questões</small></div><b className={item.rate < 70 ? 'low' : ''}>{item.rate}%</b></button>)}</div>
-      {grouped.length > 6 && <div className="show-all-row"><button className="secondary-button" onClick={() => setShowAllSubjects(!showAllSubjects)}>{showAllSubjects ? 'Mostrar menos' : `Ver todos os ${grouped.length} assuntos`}<ChevronDown size={15} className={showAllSubjects ? 'rotated' : ''} /></button></div>}
+    <section className="card subject-overview"><CardTitle title="Mapa por assunto" subtitle={`${filteredSubjects.length}${filteredSubjects.length !== grouped.length ? ` de ${grouped.length}` : ''} assuntos · ${mapSortLabel}`} />
+      <div className="subject-map-filters">
+        <label className="subject-map-search"><span>Buscar assunto</span><div><Search size={15} /><input value={mapQuery} onChange={(e) => { setMapQuery(e.target.value); setShowAllSubjects(false) }} placeholder="Ex.: porcentagem" /></div></label>
+        <label><span>Matéria</span><select value={mapDiscipline} onChange={(e) => { setMapDiscipline(e.target.value); setShowAllSubjects(false) }}><option value="all">Todas as matérias</option>{disciplines.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+        <label><span>Organizar por</span><select value={mapSort} onChange={(e) => { setMapSort(e.target.value as SubjectMapSort); setShowAllSubjects(false) }}><option value="lowest">Menor aproveitamento</option><option value="highest">Maior aproveitamento</option><option value="questions">Mais questões feitas</option><option value="alphabetical">Ordem alfabética</option></select></label>
+        {hasMapFilters && <button className="clear-map-filters" type="button" onClick={resetSubjectMap}><X size={14} />Limpar filtros</button>}
+      </div>
+      <div className="subject-pills">{subjectCards.map((item) => <button type="button" key={item.key} onClick={() => { setFilter(item.disciplineId); setQuery(item.subject) }} className={filter === item.disciplineId && query === item.subject ? 'selected' : ''}><span style={{ background: item.color }} /><div><strong>{item.subject}</strong><small>{item.disciplineName}{item.subtopic ? ` · ${item.subtopic}` : ''} · {item.total} questões</small></div><b className={item.rate < 70 ? 'low' : ''}>{item.rate}%</b></button>)}</div>
+      {!filteredSubjects.length && <div className="subject-map-empty"><Search size={21} /><strong>Nenhum assunto encontrado</strong><p>Tente outra busca ou limpe os filtros do mapa.</p>{hasMapFilters && <button type="button" onClick={resetSubjectMap}>Limpar filtros</button>}</div>}
+      {filteredSubjects.length > 6 && <div className="show-all-row"><button className="secondary-button" onClick={() => setShowAllSubjects(!showAllSubjects)}>{showAllSubjects ? 'Mostrar menos' : `Ver todos os ${filteredSubjects.length} assuntos`}<ChevronDown size={15} className={showAllSubjects ? 'rotated' : ''} /></button></div>}
     </section>
     <section className="card table-card"><div className="table-toolbar"><div><h2>Histórico de baterias</h2><p>Dados inseridos após resolver no QConcursos</p></div><div className="table-filters"><label><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar assunto" /></label><select value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">Todas as matérias</option>{disciplines.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select><button className="primary-button small" onClick={onAdd}><Plus size={16} />Nova bateria</button></div></div>
       <div className="table-wrap"><table><thead><tr><th>Data</th><th>Matéria / assunto</th><th>Questões</th><th>Acertos</th><th>Aproveitamento</th><th /></tr></thead><tbody>{visible.map((b) => { const d = disciplines.find((x) => x.id === b.disciplineId)!; const rate = percentage(b.correct, b.total); return <tr key={b.id}><td>{dateLabel(b.date)}</td><td><div className="table-subject"><span style={{ background: d.color }} /><div><strong>{d.name}</strong><small>{b.subject}{b.subtopic ? ` · ${b.subtopic}` : ''}</small></div></div></td><td>{b.total}</td><td>{b.correct}</td><td><div className="rate-cell"><span className={rate < 70 ? 'rate-low' : rate >= 80 ? 'rate-high' : ''}>{rate}%</span><div><i style={{ width: `${rate}%` }} /></div></div></td><td><button className="ghost-icon danger" onClick={() => onDelete(b.id)} title="Excluir"><Trash2 size={16} /></button></td></tr>})}</tbody></table>{!visible.length && <Empty title="Nenhuma bateria encontrada" detail="Ajuste os filtros ou registre um novo bloco de questões." />}</div>
@@ -399,16 +421,17 @@ function QuestionModal({ disciplines, onClose, onSave }: { disciplines: Discipli
   const [total, setTotal] = useState(20)
   const [correct, setCorrect] = useState(0)
   const [date, setDate] = useState(today())
-  const submit = (e: FormEvent) => { e.preventDefault(); if (!subject.trim() || total < 1 || correct < 0 || correct > total) return; onSave({ id: uid(), disciplineId, subject: subject.trim(), subtopic: subtopic.trim() || undefined, total, correct, date }) }
+  const [origin, setOrigin] = useState<QuestionBatch['origin']>('study')
+  const submit = (e: FormEvent) => { e.preventDefault(); if (!subject.trim() || total < 1 || correct < 0 || correct > total) return; onSave({ id: uid(), disciplineId, subject: subject.trim(), subtopic: subtopic.trim() || undefined, origin, total, correct, date }) }
   return <div className="modal-backdrop" onMouseDown={onClose}><form className="modal" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit}><div className="modal-head"><div><span className="eyebrow">REGISTRO RÁPIDO</span><h2>Como foi a bateria?</h2><p>Copie apenas o resultado que obteve no QConcursos.</p></div><button type="button" className="icon-button" onClick={onClose}><X size={19} /></button></div>
-    <div className="form-grid"><label className="full">Matéria<select value={disciplineId} onChange={(e) => setDisciplineId(e.target.value)}>{disciplines.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label><label className="full">Assunto específico <span>— obrigatório</span><input autoFocus required value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Ex.: Porcentagem" /><small>Use sempre o mesmo nome para acumular o histórico desse assunto.</small></label><label className="full">Subassunto <span>(opcional)</span><input value={subtopic} onChange={(e) => setSubtopic(e.target.value)} placeholder="Ex.: aumento e desconto sucessivos" /></label><label>Questões feitas<input type="number" min="1" value={total} onChange={(e) => { const v = +e.target.value; setTotal(v); if (correct > v) setCorrect(v) }} /></label><label>Acertos<input type="number" min="0" max={total} value={correct} onChange={(e) => setCorrect(+e.target.value)} /></label><label className="full">Data em que estudou<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label></div>
+    <div className="form-grid"><label className="full">Matéria<select value={disciplineId} onChange={(e) => setDisciplineId(e.target.value)}>{disciplines.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label><label className="full">Contexto da bateria<select value={origin} onChange={(e) => setOrigin(e.target.value as QuestionBatch['origin'])}><option value="study">Estudo normal — inicia o ciclo 24h, 7d e 30d</option><option value="review">Revisão — conta no desempenho, sem novo ciclo</option></select></label><label className="full">Assunto específico <span>— obrigatório</span><input autoFocus required value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Ex.: Porcentagem" /><small>Use sempre o mesmo nome para acumular o histórico desse assunto.</small></label><label className="full">Subassunto <span>(opcional)</span><input value={subtopic} onChange={(e) => setSubtopic(e.target.value)} placeholder="Ex.: aumento e desconto sucessivos" /></label><label>Questões feitas<input type="number" min="1" value={total} onChange={(e) => { const v = +e.target.value; setTotal(v); if (correct > v) setCorrect(v) }} /></label><label>Acertos<input type="number" min="0" max={total} value={correct} onChange={(e) => setCorrect(+e.target.value)} /></label><label className="full">Data da bateria<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label></div>
     <div className="result-preview"><span>Aproveitamento desta bateria</span><strong>{percentage(correct, total)}%</strong><div className="progress"><i style={{ width: `${percentage(correct, total)}%` }} /></div></div>
     <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button"><Check size={17} />Salvar bateria</button></div>
   </form></div>
 }
 
 function Edict({ sections, setSections, notify }: { sections: EdictSection[]; setSections: (v: EdictSection[]) => void; notify: (s: string) => void }) {
-  const [open, setOpen] = useState<string[]>([sections[0]?.id, sections[5]?.id].filter(Boolean))
+  const [open, setOpen] = useState<string[]>([])
   const [search, setSearch] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [newSection, setNewSection] = useState(sections[0]?.id ?? '')
@@ -439,12 +462,13 @@ function TopicRow({ topic, onCycle, depth = 0 }: { topic: EdictTopic; onCycle: (
 function flattenTopics(topics: EdictTopic[]): EdictTopic[] { return topics.flatMap((topic) => [topic, ...flattenTopics(topic.children ?? [])]) }
 function updateTopic(topics: EdictTopic[], id: string, fn: (t: EdictTopic) => EdictTopic): EdictTopic[] { return topics.map((t) => t.id === id ? fn(t) : { ...t, ...(t.children ? { children: updateTopic(t.children, id, fn) } : {}) }) }
 
-function Cycle({ disciplines, setDisciplines, availability, setAvailability, missions, setMissions, batches, weeklyPlan, setWeeklyPlan, notify }: { disciplines: Discipline[]; setDisciplines: (d: Discipline[]) => void; availability: Availability[]; setAvailability: (a: Availability[]) => void; missions: Mission[]; setMissions: (m: Mission[]) => void; batches: QuestionBatch[]; weeklyPlan: WeeklyPlanItem[]; setWeeklyPlan: (p: WeeklyPlanItem[]) => void; notify: (s: string) => void }) {
+function Cycle({ disciplines, setDisciplines, availability, setAvailability, missions, setMissions, sessions, batches, weeklyPlan, setWeeklyPlan, notify }: { disciplines: Discipline[]; setDisciplines: (d: Discipline[]) => void; availability: Availability[]; setAvailability: (a: Availability[]) => void; missions: Mission[]; setMissions: (m: Mission[]) => void; sessions: StudySession[]; batches: QuestionBatch[]; weeklyPlan: WeeklyPlanItem[]; setWeeklyPlan: (p: WeeklyPlanItem[]) => void; notify: (s: string) => void }) {
   const currentDay = new Date().getDay()
   const [planDay, setPlanDay] = useState(currentDay)
   const [planDiscipline, setPlanDiscipline] = useState(disciplines[0].id)
   const todayMissions = missions.filter((m) => m.date === today())
-  const planned = todayMissions.reduce((a, m) => a + m.plannedMinutes, 0)
+  const studiedTodaySeconds = studySecondsOnDate(sessions, today())
+  const studiedTodayMinutes = Math.round(studiedTodaySeconds / 60)
   const capacity = availability.find((a) => a.day === currentDay)?.minutes ?? 0
   const alerts = reviewAlerts(batches, missions)
   const dueReviews = alerts.filter((review) => review.daysLate >= 0)
@@ -460,19 +484,38 @@ function Cycle({ disciplines, setDisciplines, availability, setAvailability, mis
       ...scheduled.map((item) => { const discipline = disciplines.find((d) => d.id === item.disciplineId)!; return { disciplineId: item.disciplineId, title: `${discipline.name} · estudo planejado`, review: false, priority: discipline.difficulty === 'Difícil' ? 10 : discipline.difficulty === 'Médio' ? 5 : 0 } }),
     ].sort((a, b) => b.priority - a.priority)
     const completedToday = todayMissions.filter((mission) => mission.completed)
-    let remaining = Math.max(0, capacity - completedToday.reduce((sum, mission) => sum + mission.plannedMinutes, 0))
-    const generated: Mission[] = []
-    candidates.forEach((item) => {
-      if (remaining < 15 || generated.some((mission) => mission.title === item.title)) return
-      const d = disciplines.find((discipline) => discipline.id === item.disciplineId)!
-      const minutes = Math.min(difficultyMinutes(d.difficulty, item.review), remaining)
-      generated.push({ id: uid(), disciplineId: d.id, title: item.title, plannedMinutes: minutes, completed: false, notes: '', date: today() })
-      remaining -= minutes
+    const remaining = Math.max(0, capacity - studiedTodayMinutes)
+    const uniqueCandidates = candidates.filter((item, index) => candidates.findIndex((candidate) => candidate.title === item.title) === index)
+    const selectedCandidates = uniqueCandidates.slice(0, Math.floor(remaining / 15))
+    const weights = selectedCandidates.map((item) => {
+      const discipline = disciplines.find((candidate) => candidate.id === item.disciplineId)!
+      return difficultyMinutes(discipline.difficulty, item.review)
     })
+    const allocations = distributeMinutesByWeight(remaining, weights)
+    const generated: Mission[] = selectedCandidates.map((item, index) => ({
+      id: uid(),
+      disciplineId: item.disciplineId,
+      title: item.title,
+      plannedMinutes: allocations[index],
+      completed: false,
+      notes: '',
+      date: today(),
+    }))
     setMissions([...missions.filter((m) => m.date !== today()), ...completedToday, ...generated])
-    notify(`${generated.length} missões criadas a partir do ciclo e das revisões de hoje.`)
+    notify(generated.length
+      ? `${generated.length} missões criadas, preenchendo ${formatMinutes(remaining)} conforme a dificuldade.`
+      : 'Adicione matérias ao ciclo de hoje para distribuir seu tempo disponível.')
   }
   const toggle = (id: string) => setMissions(missions.map((m) => m.id === id ? { ...m, completed: !m.completed } : m))
+  const deleteMission = (id: string) => {
+    setMissions(missions.filter((mission) => mission.id !== id))
+    notify('Missão removida.')
+  }
+  const cancelTodayMissions = () => {
+    if (!window.confirm('Cancelar todas as missões de hoje? Esta ação removerá também as missões já concluídas.')) return
+    setMissions(missions.filter((mission) => mission.date !== today()))
+    notify('Missões de hoje canceladas.')
+  }
   const addPlanItem = (event: FormEvent) => {
     event.preventDefault()
     if (weeklyPlan.some((item) => item.day === planDay && item.disciplineId === planDiscipline)) return notify('Essa matéria já está nesse dia.')
@@ -480,7 +523,7 @@ function Cycle({ disciplines, setDisciplines, availability, setAvailability, mis
     notify('Matéria adicionada ao ciclo semanal.')
   }
 
-  return <div className="page-content cycle-layout"><section className="cycle-main"><div className="cycle-summary"><div><span>CAPACIDADE DE HOJE</span><strong>{formatMinutes(capacity)}</strong></div><div><span>PLANEJADO</span><strong>{formatMinutes(planned)}</strong></div><div><span>REVISÕES PENDENTES</span><strong>{dueReviews.length}</strong></div><button className="primary-button" onClick={generate}><Sparkles size={17} />Gerar missões de hoje</button></div>
+  return <div className="page-content cycle-layout"><section className="cycle-main"><div className="cycle-summary"><div><span>CAPACIDADE DE HOJE</span><strong>{formatMinutes(capacity)}</strong></div><div><span>ESTUDADO HOJE</span><strong>{formatStudySeconds(studiedTodaySeconds)}</strong></div><div><span>REVISÕES PENDENTES</span><strong>{dueReviews.length}</strong></div><section className="cycle-actions"><button className="primary-button" onClick={generate}><Sparkles size={17} />Gerar missões de hoje</button>{todayMissions.length > 0 && <button className="secondary-button cancel-missions" onClick={cancelTodayMissions}><Trash2 size={16} />Cancelar missões de hoje</button>}</section></div>
     <section className="card weekly-card"><CardTitle title="Meu ciclo semanal" subtitle="Defina exatamente o que pretende estudar em cada dia" />
       <div className="week-grid">{dayNames.map((day, index) => <div className={`week-day ${index === currentDay ? 'current' : ''}`} key={day}><div className="week-day-head"><strong>{day}</strong>{index === currentDay && <span>HOJE</span>}</div><div className="week-items">{weeklyPlan.filter((item) => item.day === index).map((item) => { const d = disciplines.find((discipline) => discipline.id === item.disciplineId)!; return <div className="week-item" key={item.id}><i style={{ background: d.color }} /><div><strong>{d.name}</strong></div><button onClick={() => setWeeklyPlan(weeklyPlan.filter((plan) => plan.id !== item.id))} title="Remover do ciclo"><X size={13} /></button></div> })}{!weeklyPlan.some((item) => item.day === index) && <span className="free-day">Livre</span>}</div></div>)}</div>
       <form className="plan-form simple" onSubmit={addPlanItem}><select value={planDay} onChange={(e) => setPlanDay(+e.target.value)}>{dayNames.map((day, index) => <option value={index} key={day}>{day}</option>)}</select><select value={planDiscipline} onChange={(e) => setPlanDiscipline(e.target.value)}>{disciplines.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select><button className="secondary-button"><Plus size={16} />Adicionar matéria</button></form>
@@ -489,29 +532,46 @@ function Cycle({ disciplines, setDisciplines, availability, setAvailability, mis
       <div className="review-lanes"><div><span className="review-lane-title due"><BellRing size={14} />PENDENTES · {dueReviews.length}</span>{dueReviews.slice(0, 6).map((review) => { const d = disciplines.find((item) => item.id === review.disciplineId)!; return <div className="review-row" key={review.id}><i style={{ background: d.color }} /><div><strong>{review.subject}</strong><small>{d.name} · revisão de {review.interval}</small></div><span className="overdue">{review.daysLate === 0 ? 'Hoje' : `${review.daysLate}d atrasada`}</span></div> })}{!dueReviews.length && <p className="review-empty">Nenhuma revisão pendente.</p>}</div><div><span className="review-lane-title">PRÓXIMAS</span>{nextReviews.map((review) => { const d = disciplines.find((item) => item.id === review.disciplineId)!; return <div className="review-row" key={review.id}><i style={{ background: d.color }} /><div><strong>{review.subject}</strong><small>{d.name} · revisão de {review.interval}</small></div><span>{dateLabel(review.dueDate)}</span></div> })}</div></div>
     </section>
     <section className="card"><CardTitle title="Missões de hoje" subtitle="Primeiro entram as revisões pendentes; depois, os assuntos do ciclo semanal" />
-      <div className="mission-list">{todayMissions.map((m, i) => { const d = disciplines.find((x) => x.id === m.disciplineId)!; return <div className={`mission-card ${m.completed ? 'done' : ''}`} key={m.id}><span className="mission-index">{String(i + 1).padStart(2, '0')}</span><span className="subject-mark" style={{ background: d.color }} /><div className="mission-copy"><small style={{ color: d.color }}>{d.name.toUpperCase()} · {d.difficulty.toUpperCase()}</small><strong>{m.title}</strong><span><Clock3 size={14} />{formatMinutes(m.plannedMinutes)} de foco</span></div><button className={m.completed ? 'complete-button completed' : 'complete-button'} onClick={() => toggle(m.id)}>{m.completed ? <><Check size={16} />Concluída</> : 'Concluir'}</button></div>})}{!todayMissions.length && <Empty title="Seu dia ainda está em branco" detail="Configure o ciclo semanal e gere as missões do dia." />}</div>
+      <MissionList missions={todayMissions} disciplines={disciplines} sessions={sessions} onToggle={toggle} onDelete={deleteMission} />
     </section></section>
     <aside className="cycle-aside"><section className="card schedule-card"><CardTitle title="Disponibilidade" subtitle="Horas brutas por dia" /><div className="availability">{availability.map((a) => <label key={a.day} className={a.day === currentDay ? 'today' : ''}><span>{dayNames[a.day]}{a.day === currentDay && <small>HOJE</small>}</span><div><button type="button" onClick={() => setAvailability(availability.map((x) => x.day === a.day ? { ...x, minutes: Math.max(0, x.minutes - 30) } : x))}>−</button><strong>{formatMinutes(a.minutes)}</strong><button type="button" onClick={() => setAvailability(availability.map((x) => x.day === a.day ? { ...x, minutes: x.minutes + 30 } : x))}>+</button></div></label>)}</div></section>
     <section className="card difficulty-card"><CardTitle title="Dificuldade com função" subtitle="Define prioridade e tempo sugerido" /><div className="difficulty-help"><span><b>Fácil</b>30min · revisão 15min</span><span><b>Médio</b>45min · revisão 20min</span><span><b>Difícil</b>60min · revisão 25min</span></div><div>{disciplines.map((d) => <label key={d.id}><span><i style={{ background: d.color }} />{d.name}</span><select value={d.difficulty} onChange={(e) => setDisciplines(disciplines.map((x) => x.id === d.id ? { ...x, difficulty: e.target.value as Discipline['difficulty'] } : x))}><option>Fácil</option><option>Médio</option><option>Difícil</option></select></label>)}</div></section></aside>
   </div>
 }
 
-function Focus({ disciplines, missions, setMissions, sessions, setSessions, notify }: { disciplines: Discipline[]; missions: Mission[]; setMissions: (m: Mission[]) => void; sessions: StudySession[]; setSessions: (s: StudySession[]) => void; notify: (s: string) => void }) {
+function MissionList({ missions, disciplines, sessions, onToggle, onDelete }: { missions: Mission[]; disciplines: Discipline[]; sessions: StudySession[]; onToggle: (id: string) => void; onDelete: (id: string) => void }) {
+  return <div className="mission-list">{missions.map((mission, index) => {
+    const discipline = disciplines.find((item) => item.id === mission.disciplineId)
+    if (!discipline) return null
+    const studiedSeconds = studySecondsForMission(sessions, mission.id)
+    const timeLabel = studiedSeconds > 0
+      ? `${formatStudySeconds(studiedSeconds)} de foco realizado`
+      : mission.completed
+        ? 'Sem tempo de foco registrado'
+        : `${formatMinutes(mission.plannedMinutes)} de foco sugerido`
+
+    return <div className={`mission-card ${mission.completed ? 'done' : ''}`} key={mission.id}><span className="mission-index">{String(index + 1).padStart(2, '0')}</span><span className="subject-mark" style={{ background: discipline.color }} /><div className="mission-copy"><small style={{ color: discipline.color }}>{discipline.name.toUpperCase()} · {discipline.difficulty.toUpperCase()}</small><strong>{mission.title}</strong><span><Clock3 size={14} />{timeLabel}</span></div><div className="mission-actions"><button className={mission.completed ? 'complete-button completed' : 'complete-button'} onClick={() => onToggle(mission.id)}>{mission.completed ? <><Check size={16} />Concluída</> : 'Concluir'}</button><button className="mission-delete" onClick={() => onDelete(mission.id)} title="Excluir missão" aria-label={`Excluir missão ${mission.title}`}><Trash2 size={15} /></button></div></div>
+  })}{!missions.length && <Empty title="Seu dia ainda está em branco" detail="Configure o ciclo semanal e gere as missões do dia." />}</div>
+}
+
+function Focus({ disciplines, missions, setMissions, sessions, setSessions, batches, setBatches, liquidTimer, setLiquidTimer, notify }: { disciplines: Discipline[]; missions: Mission[]; setMissions: (m: Mission[]) => void; sessions: StudySession[]; setSessions: (s: StudySession[]) => void; batches: QuestionBatch[]; setBatches: (b: QuestionBatch[]) => void; liquidTimer: LiquidTimerState; setLiquidTimer: (timer: LiquidTimerState) => void; notify: (s: string) => void }) {
   const [disciplineId, setDisciplineId] = useState(disciplines[0].id)
   const [missionId, setMissionId] = useState('')
-  const [elapsed, setElapsed] = useState(0)
-  const [running, setRunning] = useState(false)
+  const [elapsed, setElapsed] = useState(() => runningTimerSeconds(liquidTimer.elapsed, liquidTimer.running ? liquidTimer.startedAt : null))
+  const [running, setRunning] = useState(liquidTimer.running)
   const [notes, setNotes] = useState('')
   const [mode, setMode] = useState<'liquido' | 'pomodoro'>('liquido')
   const [focusMinutes, setFocusMinutes] = useState(50)
   const [breakMinutes, setBreakMinutes] = useState(10)
   const [remaining, setRemaining] = useState(50 * 60)
   const [phase, setPhase] = useState<'Foco' | 'Pausa'>('Foco')
+  const [recordQuestions, setRecordQuestions] = useState(false)
+  const [questionDrafts, setQuestionDrafts] = useState<QuestionBatchDraft[]>(() => [createQuestionBatchDraft()])
 
   useEffect(() => {
     if (!running) return
     const timer = window.setInterval(() => {
-      if (mode === 'liquido') setElapsed((v) => v + 1)
+      if (mode === 'liquido') setElapsed(runningTimerSeconds(liquidTimer.elapsed, liquidTimer.startedAt))
       else setRemaining((v) => {
         if (v > 0) return v - 1
         const next = phase === 'Foco' ? 'Pausa' : 'Foco'
@@ -519,25 +579,77 @@ function Focus({ disciplines, missions, setMissions, sessions, setSessions, noti
         notify(next === 'Pausa' ? 'Ciclo concluído. Hora de respirar.' : 'Pausa encerrada. Vamos voltar?')
         return (next === 'Foco' ? focusMinutes : breakMinutes) * 60
       })
-    }, 1000)
+    }, 250)
     return () => window.clearInterval(timer)
-  }, [running, mode, phase, focusMinutes, breakMinutes])
+  }, [running, mode, phase, focusMinutes, breakMinutes, liquidTimer.elapsed, liquidTimer.startedAt])
+
+  const pauseLiquidTimer = () => {
+    const currentElapsed = runningTimerSeconds(liquidTimer.elapsed, liquidTimer.startedAt)
+    setElapsed(currentElapsed)
+    setLiquidTimer({ elapsed: currentElapsed, running: false, startedAt: null })
+    setRunning(false)
+  }
+  const toggleTimer = () => {
+    if (mode === 'pomodoro') return setRunning(!running)
+    if (running) return pauseLiquidTimer()
+    const startedAt = Date.now()
+    setLiquidTimer({ elapsed, running: true, startedAt })
+    setRunning(true)
+  }
+
+  const selectMission = (id: string) => {
+    setMissionId(id)
+    const mission = missions.find((item) => item.id === id)
+    if (!mission) {
+      setQuestionDrafts([createQuestionBatchDraft()])
+      return
+    }
+
+    setDisciplineId(mission.disciplineId)
+    if (!mission.title.startsWith('Revisão ')) {
+      setQuestionDrafts([createQuestionBatchDraft()])
+      return
+    }
+
+    const [, subject = '', ...subtopic] = mission.title.split(' · ')
+    setQuestionDrafts([createQuestionBatchDraft('review', subject, subtopic.join(' · '))])
+    setRecordQuestions(true)
+  }
+
+  const updateQuestionDraft = (id: string, update: Partial<QuestionBatchDraft>) => {
+    setQuestionDrafts(questionDrafts.map((draft) => draft.id === id ? { ...draft, ...update } : draft))
+  }
+
+  const selectedMission = missions.find((mission) => mission.id === missionId)
+  const isReviewMission = selectedMission?.title.startsWith('Revisão ') ?? false
 
   const save = () => {
-    if (elapsed < 1) return notify('Inicie o cronômetro antes de salvar.')
-    setSessions([{ id: uid(), disciplineId, missionId: missionId || undefined, seconds: elapsed, notes, date: today() }, ...sessions])
+    const savedElapsed = running ? runningTimerSeconds(liquidTimer.elapsed, liquidTimer.startedAt) : elapsed
+    if (savedElapsed < 1) return notify('Inicie o cronômetro antes de salvar.')
+    const invalidDraftIndex = recordQuestions ? invalidQuestionBatchIndex(questionDrafts) : -1
+    if (invalidDraftIndex >= 0) {
+      return notify(`Confira o assunto, as questões e os acertos da bateria ${invalidDraftIndex + 1}.`)
+    }
+
+    setSessions([{ id: uid(), disciplineId, missionId: missionId || undefined, seconds: savedElapsed, notes, date: today() }, ...sessions])
+    if (recordQuestions) {
+      setBatches([...questionBatchesFromDrafts(questionDrafts, disciplineId, today()), ...batches])
+    }
     if (missionId) setMissions(missions.map((m) => m.id === missionId ? { ...m, completed: true, notes } : m))
-    setRunning(false); setElapsed(0); setNotes(''); notify('Sessão salva como tempo líquido.')
+    setLiquidTimer({ elapsed: 0, running: false, startedAt: null })
+    const savedBatchCount = questionDrafts.length
+    setRunning(false); setElapsed(0); setNotes(''); setRecordQuestions(false); setQuestionDrafts([createQuestionBatchDraft()]); notify(recordQuestions ? `Sessão e ${savedBatchCount} ${savedBatchCount === 1 ? 'bateria salva' : 'baterias salvas'}.` : 'Sessão salva como tempo líquido.')
   }
   const resetPomodoro = (newPhase = phase) => { setRunning(false); setRemaining((newPhase === 'Foco' ? focusMinutes : breakMinutes) * 60) }
 
-  return <div className="page-content focus-layout"><section className="focus-stage card"><div className="mode-tabs"><button className={mode === 'liquido' ? 'active' : ''} onClick={() => { setMode('liquido'); setRunning(false) }}>Horas líquidas</button><button className={mode === 'pomodoro' ? 'active' : ''} onClick={() => { setMode('pomodoro'); setRunning(false) }}>Pomodoro</button></div>
-    <div className="focus-selector"><label>Matéria<select value={disciplineId} onChange={(e) => setDisciplineId(e.target.value)}>{disciplines.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label><label>Missão do dia<select value={missionId} onChange={(e) => setMissionId(e.target.value)}><option value="">Sessão livre</option>{missions.filter((m) => m.date === today() && !m.completed).map((m) => <option value={m.id} key={m.id}>{m.title}</option>)}</select></label></div>
-    {mode === 'liquido' ? <div className="timer-face"><span className="timer-label">TEMPO LÍQUIDO</span><strong>{formatClock(elapsed)}</strong><p>{running ? 'Cronômetro em andamento. Pause sempre que sair do foco.' : elapsed ? 'Sessão pausada. Retome quando estiver pronto.' : 'O tempo só conta quando você está estudando.'}</p><div className="timer-actions"><button className="reset-button" onClick={() => { setRunning(false); setElapsed(0) }}><RotateCcw size={20} /></button><button className="play-button" onClick={() => setRunning(!running)}>{running ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{running ? 'Pausar' : elapsed ? 'Continuar' : 'Começar'}</button><button className="save-time" disabled={!elapsed} onClick={save}><Check size={20} /></button></div></div> : <div className="timer-face"><span className="timer-label">{phase.toUpperCase()}</span><strong>{formatClock(remaining)}</strong><p>{phase === 'Foco' ? `${focusMinutes} minutos de atenção sem negociar.` : `${breakMinutes} minutos para recuperar a energia.`}</p><div className="timer-actions"><button className="reset-button" onClick={() => resetPomodoro()}><RotateCcw size={20} /></button><button className="play-button" onClick={() => setRunning(!running)}>{running ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{running ? 'Pausar' : 'Iniciar ciclo'}</button><button className="reset-button" onClick={() => { const next = phase === 'Foco' ? 'Pausa' : 'Foco'; setPhase(next); resetPomodoro(next) }}><ChevronRight size={20} /></button></div></div>}
+  return <div className="page-content focus-layout"><section className="focus-stage card"><div className="mode-tabs"><button className={mode === 'liquido' ? 'active' : ''} onClick={() => { setMode('liquido'); setRunning(liquidTimer.running); setElapsed(runningTimerSeconds(liquidTimer.elapsed, liquidTimer.running ? liquidTimer.startedAt : null)) }}>Horas líquidas</button><button className={mode === 'pomodoro' ? 'active' : ''} onClick={() => { if (mode === 'liquido' && running) pauseLiquidTimer(); setMode('pomodoro'); setRunning(false) }}>Pomodoro</button></div>
+    <div className="focus-selector"><label>Matéria<select value={disciplineId} onChange={(e) => setDisciplineId(e.target.value)}>{disciplines.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label><label>Missão do dia<select value={missionId} onChange={(e) => selectMission(e.target.value)}><option value="">Sessão livre</option>{missions.filter((m) => m.date === today() && !m.completed).map((m) => <option value={m.id} key={m.id}>{m.title}</option>)}</select></label></div>
+    {mode === 'liquido' ? <div className="timer-face"><span className="timer-label">TEMPO LÍQUIDO</span><strong>{formatClock(elapsed)}</strong><p>{running ? 'Cronômetro em andamento. Pause sempre que sair do foco.' : elapsed ? 'Sessão pausada. Retome quando estiver pronto.' : 'O tempo só conta quando você está estudando.'}</p><div className="timer-actions"><button className="reset-button" onClick={() => { setLiquidTimer({ elapsed: 0, running: false, startedAt: null }); setRunning(false); setElapsed(0) }}><RotateCcw size={20} /></button><button className="play-button" onClick={toggleTimer}>{running ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{running ? 'Pausar' : elapsed ? 'Continuar' : 'Começar'}</button><button className="save-time" disabled={!elapsed} onClick={save}><Check size={20} /></button></div></div> : <div className="timer-face"><span className="timer-label">{phase.toUpperCase()}</span><strong>{formatClock(remaining)}</strong><p>{phase === 'Foco' ? `${focusMinutes} minutos de atenção sem negociar.` : `${breakMinutes} minutos para recuperar a energia.`}</p><div className="timer-actions"><button className="reset-button" onClick={() => resetPomodoro()}><RotateCcw size={20} /></button><button className="play-button" onClick={toggleTimer}>{running ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{running ? 'Pausar' : 'Iniciar ciclo'}</button><button className="reset-button" onClick={() => { const next = phase === 'Foco' ? 'Pausa' : 'Foco'; setPhase(next); resetPomodoro(next) }}><ChevronRight size={20} /></button></div></div>}
+    <div className="session-questions"><label className="session-question-toggle"><input type="checkbox" checked={recordQuestions} onChange={(e) => setRecordQuestions(e.target.checked)} /><span><strong>Registrar questões desta sessão</strong><small>Cada assunto será salvo como uma bateria independente.</small></span></label>{recordQuestions && <div className="session-question-list">{questionDrafts.map((draft, index) => <section className="session-question-entry" key={draft.id}><header><strong>Bateria {index + 1}</strong>{questionDrafts.length > 1 && <button type="button" onClick={() => setQuestionDrafts(questionDrafts.filter((item) => item.id !== draft.id))} aria-label={`Remover bateria ${index + 1}`} title="Remover bateria"><Trash2 size={14} /></button>}</header><div className="session-question-grid"><label>Contexto<select value={draft.origin} onChange={(e) => updateQuestionDraft(draft.id, { origin: e.target.value as QuestionBatchDraft['origin'] })}><option value="study">Estudo normal</option><option value="review">Revisão</option></select></label><label className="wide">Assunto <input value={draft.subject} onChange={(e) => updateQuestionDraft(draft.id, { subject: e.target.value })} placeholder="Ex.: Segurança da Informação" /></label><label className="wide">Subassunto <span>(opcional)</span><input value={draft.subtopic} onChange={(e) => updateQuestionDraft(draft.id, { subtopic: e.target.value })} placeholder="Ex.: malwares e antivírus" /></label><label>Questões feitas<input type="number" min="1" value={draft.total} onChange={(e) => { const total = +e.target.value; updateQuestionDraft(draft.id, { total, ...(draft.correct > total ? { correct: total } : {}) }) }} /></label><label>Acertos<input type="number" min="0" max={draft.total} value={draft.correct} onChange={(e) => updateQuestionDraft(draft.id, { correct: +e.target.value })} /></label><p className={draft.origin === 'review' ? 'review-context' : ''}>{draft.origin === 'review' ? 'Conta no desempenho e não gera uma nova sequência de revisões.' : 'Este assunto terá revisões próprias em 24h, 7 dias e 30 dias.'}</p></div></section>)}{!isReviewMission && <button type="button" className="secondary-button add-question-batch" onClick={() => setQuestionDrafts([...questionDrafts, createQuestionBatchDraft()])}><Plus size={15} />Adicionar outro assunto</button>}</div>}</div>
     <div className="notes-area"><label><FileText size={16} />Diário de bordo <span>— pegadinhas, dúvidas e pontos para revisar</span></label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Ex.: confundi o prazo da prisão temporária; revisar a tabela amanhã..." /><small>Salvo junto à sessão quando você concluir.</small></div>
   </section>
   <aside className="focus-aside"><section className="card pomodoro-settings"><CardTitle title="Configurar Pomodoro" subtitle="Personalize os blocos" /><label>Tempo de foco<div><input type="number" min="1" max="120" value={focusMinutes} onChange={(e) => { const v = +e.target.value; setFocusMinutes(v); if (!running && phase === 'Foco') setRemaining(v * 60) }} /><span>min</span></div></label><label>Tempo de pausa<div><input type="number" min="1" max="60" value={breakMinutes} onChange={(e) => { const v = +e.target.value; setBreakMinutes(v); if (!running && phase === 'Pausa') setRemaining(v * 60) }} /><span>min</span></div></label></section>
-    <section className="card session-history"><CardTitle title="Sessões recentes" subtitle={`${formatMinutes(Math.round(sessions.reduce((a, s) => a + s.seconds, 0) / 60))} acumuladas`} /><div>{sessions.slice(0, 5).map((s) => { const d = disciplines.find((x) => x.id === s.disciplineId)!; return <div key={s.id}><i style={{ background: d.color }} /><div><strong>{d.name}</strong><small>{dateLabel(s.date)}</small></div><b>{formatMinutes(Math.round(s.seconds / 60))}</b></div>})}</div></section>
+    <section className="card session-history"><CardTitle title="Sessões recentes" subtitle={`${formatStudySeconds(sessions.reduce((a, s) => a + s.seconds, 0))} acumuladas`} /><div>{sessions.slice(0, 5).map((s) => { const d = disciplines.find((x) => x.id === s.disciplineId)!; return <div key={s.id}><i style={{ background: d.color }} /><div><strong>{d.name}</strong><small>{dateLabel(s.date)}</small></div><b>{formatStudySeconds(s.seconds)}</b></div>})}</div></section>
   </aside></div>
 }
 
